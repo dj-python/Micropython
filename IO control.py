@@ -19,7 +19,7 @@ class MainHandler:
         self.gpioOut_clampOpen = Pin(1, Pin.OUT)
         self.gpioOut_rotation0 = Pin(2, Pin.OUT)
         self.gpioOut_rotation90 = Pin(3, Pin.OUT)
-        self.gpioOut_vacumm = Pin(4, Pin.OUT)
+        self.gpioOut_vacuum = Pin(4, Pin.OUT)
         self.init_gpioOut()
         # endregion
 
@@ -77,9 +77,9 @@ elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 1 and sel
 
     def get_gpioIn(self):
         # GPIO_IN0:IN3
-        self.gpioIn_sel.on()
+        self.gpioIn_sel.on()            # self.gpioIn_sel.value(1) 과 뭐가 다른지??
         time.sleep_us(1)
-        self.gpioIn_clampClose = not self.gpioIn0.value()
+        self.gpioIn_clampClose = not self.gpioIn0.value()           # not을 사용한 이유 회로 확인
         self.gpioIn_clampOpen = not self.gpioIn1.value()
         self.gpioIn_rotation0 = not self.gpioIn2.value()
         self.gpioIn_rotation90 = not self.gpioIn3.value()
@@ -116,30 +116,32 @@ elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 1 and sel
     def parseMessage(self, message):
         if message == 'startTest':
             self.f_executeTask = True
-self.idx_executeTask = 0
-elif message == 'abortTest':
+            self.idx_executeTask = 0
+        elif message == 'abortTest':
             pass
-elif message == 'emergency':
+        elif message == 'emergency':
             pass
-elif message == 'clamp_close':
+        elif message == 'clamp_close':
             pass
-elif message == 'clamp_open':
+        elif message == 'clamp_open':
             pass
-elif message == 'vacuum_on':
+        elif message == 'vacuum_on':
             pass
-elif message == 'vacuum_off':
+        elif message == 'vacuum_off':
             pass
-elif message == 'rotation_0' or message == 'rotation_90':
+        elif message == 'rotation_0' or message == 'rotation_90':
             if self.gpioIn_clampClose and self.gpioIn_socketClose:
                 if message == 'rotation_0':
                     pass
-else:
+                else:
                     pass
 
-def execute_process(self):
+    def execute_process(self):
         if self.idx_executeTask == 0:
-            pass
-elif self.idx_executeTask == 1:
+            self.gpioOut_vacuum.value(1)
+            self.idx_executeTask += 1
+            cntTimeout = 0
+        elif self.idx_executeTask == 1:
             pass
 
 
@@ -149,10 +151,10 @@ main = MainHandler()
 
     while True:
         cnt_msec += 1
-main.func_1msec()
+        main.func_1msec()
 
         if not cnt_msec % 10:          # 10으로 나눠서 0이 되는 10, 20, 30 .. 에서 실행
-main.func_10msec()
+            main.func_10msec()
 
         if not cnt_msec % 100:
             main.func_100msec()
