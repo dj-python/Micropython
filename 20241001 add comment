@@ -1,0 +1,347 @@
+from machine import Pin, PWM
+import W5500_EVB_PICO as W5500
+import time
+
+from W5500_EVB_PICO import (sendMessage)
+
+UDP_SERVER_PORT = 8080
+UDP_CLIENT = ('192.168.0.100', 8080)
+TIMEOUT_INIT_SOCKET_POS = 300  # 50ms * 300 = 15s
+TIMEOUT_UNIT_OP = 35  # 100ms * 35 = 3.5s
+
+
+class SocketStatus:
+    UNKNOWN = 1
+    READY = 2
+    DOING = 3
+    ERROR = 4
+
+
+class SocketError:
+    NONE = 'ERROR_NONE'
+    INIT_SOCKET_POS = 'ERROR_INIT_SOCKET_POS'
+
+
+class MainHandler:
+    cTemp = 0
+
+    def __init__(self):
+        self.sysBuzzer = Pin(14, Pin.OUT)
+        self.gpioIn_sel = Pin(15, Pin.OUT)
+        self.sysLed_pico = Pin(25, Pin.OUT)
+        self.sysLed_board = Pin(28, Pin.OUT)
+
+        # region Init GPIO_OUT
+        self.gpioOut_clampClose = Pin(0, Pin.OUT)
+        self.gpioOut_clampOpen = Pin(1, Pin.OUT)
+        self.gpioOut_rotation0 = Pin(2, Pin.OUT)
+        self.gpioOut_rotation90 = Pin(3, Pin.OUT)
+        self.gpioOut_vacumm = Pin(4, Pin.OUT)
+        self.gpioOut_spare1 = Pin(6, Pin.OUT)
+        self.gpioOut_spare2 = Pin(7, Pin.OUT)
+        self.init_gpioOut()
+        # endregion
+
+        # region Init GPIO_IN
+        self.gpioIn0 = Pin(10, Pin.IN)
+        self.gpioIn1 = Pin(11, Pin.IN)
+        self.gpioIn2 = Pin(12, Pin.IN)
+        self.gpioIn3 = Pin(13, Pin.IN)
+
+        self.gpioIn_ipSel1 = Pin(22, Pin.IN)
+        self.gpioIn_ipSel2 = Pin(26, Pin.IN)
+        self.gpioIn_ipSel4 = Pin(27, Pin.IN)
+
+        self.gpioIn_clampClose = None
+        self.gpioIn_clampOpen = None
+        self.gpioIn_rotation0 = None
+        self.gpioIn_rotation90 = None
+        self.gpioIn_vacumm = None
+        self.gpioIn_socketClose = None
+        self.gpioIn_socketOpen = None
+        # endregion
+
+        # region Init Ethernet
+        ipAddress = ''
+        if self.gpioIn_ipSel1.value() == 0 and self.gpioIn_ipSel2.value() == 0 and self.gpioIn_ipSel4.value() == 0:
+            ipAddress = '192.168.0.51'
+        elif self.gpioIn_ipSel1.value() == 0 and self.gpioIn_ipSel2.value() == 0 and self.gpioIn_ipSel4.value() == 1:
+            ipAddress = '192.168.0.52'
+        elif self.gpioIn_ipSel1.value() == 0 and self.gpioIn_ipSel2.value() == 1 and self.gpioIn_ipSel4.value() == 0:
+            ipAddress = '192.168.0.53'
+        elif self.gpioIn_ipSel1.value() == 0 and self.gpioIn_ipSel2.value() == 1 and self.gpioIn_ipSel4.value() == 1:
+            ipAddress = '192.168.0.54'
+        elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 0 and self.gpioIn_ipSel4.value() == 0:
+            ipAddress = '192.168.0.55'
+        elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 0 and self.gpioIn_ipSel4.value() == 1:
+            ipAddress = '192.168.0.56'
+        elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 1 and self.gpioIn_ipSel4.value() == 0:
+            ipAddress = '192.168.0.57'
+        elif self.gpioIn_ipSel1.value() == 1 and self.gpioIn_ipSel2.value() == 1 and self.gpioIn_ipSel4.value() == 1:
+            ipAddress = '192.168.0.58'
+
+        W5500.init(ipAddress=ipAddress, portNumber=UDP_SERVER_PORT)
+        # endregion
+
+        self.rxMessage = str()
+
+        self.servo_pwm = PWM(Pin(5), freq=50, duty_u16=0)
+
+        self.cntExecProcess = 0                                     # 프로세스 카운트업 변수는 공용으로 사용
+        self.cntTimeOutExecProcess = 0                              # 타임아웃 변수는 공용으로 사용 (이니셜, 유닛동작)
+
+        self.isExecProcess_unitOp= False
+        self.idxExecProcess_unitOp = 0
+
+        self.isExecProcess_initSocketPos = False
+        self.idxExecProcess_initSocketPos = 0
+        self.socketCover_pwmDuty_close = 0
+        self.socketCover_pwmDuty_open = 0
+        self.socketStatus = SocketStatus.UNKNOWN                    # SocketStatus 클라스에 의해 1이 됨.
+        self.socketError = SocketError.NONE
+
+        self.isExecProcess_main = False
+        self.idxExecProcess_main = 0
+
+    def init_gpioOut(self):
+        self.set_gpioOut(self.sysBuzzer, False)
+
+        self.set_gpioOut(self.gpioOut_clampClose, False)
+        self.set_gpioOut(self.gpioOut_clampOpen, True)
+        self.set_gpioOut(self.gpioOut_rotation0, True)
+        self.set_gpioOut(self.gpioOut_rotation90, False)
+        self.set_gpioOut(self.gpioOut_vacumm, False)
+        self.set_gpioOut(self.gpioOut_spare1, False)
+        self.set_gpioOut(self.gpioOut_spare2, False)
+
+    @staticmethod
+    def set_gpioOut(target, value):
+        target.value(not value)
+
+    def get_gpioIn(self):
+        # GPIO_IN0:IN3
+        self.gpioIn_sel.on()
+        time.sleep_us(1)
+        self.gpioIn_clampClose = not self.gpioIn0.value()
+        self.gpioIn_clampOpen = not self.gpioIn1.value()
+        self.gpioIn_rotation0 = not self.gpioIn2.value()
+        self.gpioIn_rotation90 = not self.gpioIn3.value()
+
+        # GPIO_IN4:IN7 -> IN7: Spare
+        self.gpioIn_sel.off()
+        time.sleep_us(1)
+        self.gpioIn_vacumm = not self.gpioIn0.value()
+        self.gpioIn_socketClose = not self.gpioIn1.value()
+        self.gpioIn_socketOpen = not self.gpioIn2.value()
+
+    def func_1msec(self):
+        pass
+
+    def func_10msec(self):
+        self.get_gpioIn()
+
+        # if not self.isExecProcess_initSocketPos:
+        message, address = W5500.readMessage()
+        if message is not None:
+            self.rxMessage = message.decode('utf-8')                    # decode : utf-8로 encodeing 된 byte를 다시 str로 바꿔줌
+
+            # Command: rxMessage[1:3], Command2: rxMessage[3:5]
+            print(self.rxMessage, self.rxMessage[1:3], self.rxMessage[3:5])
+
+            # Init socket
+            if self.rxMessage[1:3] == '20':
+                self.cntTimeOutExecProcess = 0                          # 타임아웃 0 세팅
+                self.idxExecProcess_initSocketPos = 0                   # 소켓 이니셜 인덱스 0 세팅
+                self.socketStatus = SocketStatus.DOING                  # 소켓 상태 DOING으로 변경
+                self.isExecProcess_initSocketPos = True                 # 소켓 이니셜 실행
+            else:
+                if self.socketStatus is SocketStatus.READY:             # 이니셜(+Unit0p) 마지막에 READY 전환함
+                    self.cntTimeOutExecProcess = 0                      # 타임아웃 0 세팅
+                    self.idxExecProcess_unitOp = 0                      # 유닛동작 인덱스 0 세팅
+                    self.socketStatus = SocketStatus.DOING              # 소켓 상태 DOING으로 변경
+                    self.isExecProcess_unitOp = True                    # 유닛동작 실행
+
+                    # if cmd1 == '10':    # vacuum
+                    #     if cmd2 == '00':    # off
+                    #         self.set_gpioOut(self.gpioOut_vacumm, False)
+                    #     else:               # on
+                    #         self.set_gpioOut(self.gpioOut_vacumm, True)
+                    # elif cmd1 == '11':  # clamp
+                    #     if cmd2 == '00':    # close
+                    #         self.set_gpioOut(self.gpioOut_clampClose, True)
+                    #         self.set_gpioOut(self.gpioOut_clampOpen, False)
+                    #     else:               # open
+                    #         self.set_gpioOut(self.gpioOut_clampClose, False)
+                    #         self.set_gpioOut(self.gpioOut_clampOpen, True)
+                    # elif cmd1 == '12':  # socket
+                    #     if cmd2 == '00':    # close
+                    #         self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
+                    #     else:               # open
+                    #         self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
+                    # elif cmd1 == '13':  # Rotation
+                    #     if cmd2 == '00':    # 0Degree
+                    #         self.set_gpioOut(self.gpioOut_rotation0, True)
+                    #         self.set_gpioOut(self.gpioOut_rotation90, False)
+                    #     else:               # 90Degree
+                    #         self.set_gpioOut(self.gpioOut_rotation0, False)
+                    #         self.set_gpioOut(self.gpioOut_rotation90, True)
+                else:
+                    if self.socketStatus is SocketStatus.UNKNOWN:
+                        pass
+                    elif self.socketStatus is SocketStatus.DOING:
+                        pass
+                    elif self.socketStatus is SocketStatus.ERROR:
+                        pass
+
+    def func_50msec(self):
+        if self.isExecProcess_initSocketPos:
+            self.execProcess_setSocketPos()                             # Socket init 실행할 것.
+
+    def func_100msec(self):
+        if self.isExecProcess_main:                                     # 검사 시작하는 프로세스인 것 같은데?
+            self.execProcess_main()
+        elif self.isExecProcess_unitOp:                                 # Unit 동작 시작하는 프로세스
+            self.exeProcess_unitOp()
+
+    def func_500msec(self):
+        self.sysLed_pico(not self.sysLed_pico.value())
+        self.sysLed_board(not self.sysLed_pico.value())
+
+        print(self.socketStatus)
+
+        # if self.socketStatus == SocketStatus.READY:
+        #     self.cTemp += 1
+        #
+        #     if self.cTemp % 10 == 0:
+        #         self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
+        #     elif self.cTemp % 10 == 5:
+        #         self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
+
+    def execProcess_setSocketPos(self):                                          # 소켓 Initial
+        if self.idxExecProcess_initSocketPos == 0:
+            self.servo_pwm = PWM(Pin(5), freq=50, duty_u16=4900)                    # 중간쯤으로 이동
+            # self.servo_pwm = PWM(Pin(5), freq=50, duty_u16=int(2 ** 16 * 0.5))
+            self.cntExecProcess = 0
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 1:                             # 10회 그냥 반복? (50ms * 10 = 500ms)
+            self.cntExecProcess += 1
+            if self.cntExecProcess >= 10:
+                self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 2:                            # -50 이동하는 시퀀스
+            self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() - 50)
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 3:
+            if self.gpioIn_socketClose:                                         # Socket close에 다다르면 :
+                self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() + 100)        # +100으로 이동
+                self.idxExecProcess_initSocketPos += 1
+            else:
+                self.idxExecProcess_initSocketPos -= 1                          # Socket close에 다다르지 못하면 앞단계로
+        elif self.idxExecProcess_initSocketPos == 4:
+            self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() - 10)             # +100이동한 후 -10으로 한번 다시 이동 ==> +90을 하면 되는거 아닌지??
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 5:
+            if self.gpioIn_socketClose:                                         # Socket close 다시 확인하면 Close 위치 저장 (-20)
+                self.socketCover_pwmDuty_close = self.servo_pwm.duty_u16() - 20
+                self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
+                self.idxExecProcess_initSocketPos += 1
+            else:                                                               # Socket close 다시 확인 안되면 앞단계로 (-10이동)
+                self.idxExecProcess_initSocketPos -= 1
+        elif self.idxExecProcess_initSocketPos == 6:                            # Close 위치 지정되면 중간으로 다시 이동
+            self.servo_pwm.duty_u16(4900)
+            # self.servo_pwm = PWM(Pin(5), freq=50, duty_u16=int(2 ** 16 * 0.5))
+            self.cntExecProcess = 0                                             # 프로세스 카운트 변수는 다시 0으로
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 7:                            # 똑같이 500ms동안 기다리는 명령?
+            self.cntExecProcess += 1
+            if self.cntExecProcess >= 10:
+                self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 8:
+            self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() + 50)
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 9:
+            if self.gpioIn_socketOpen:
+                self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() - 100)
+                self.idxExecProcess_initSocketPos += 1
+            else:
+                self.idxExecProcess_initSocketPos -= 1
+        elif self.idxExecProcess_initSocketPos == 10:
+            self.servo_pwm.duty_u16(self.servo_pwm.duty_u16() + 10)
+            self.idxExecProcess_initSocketPos += 1
+        elif self.idxExecProcess_initSocketPos == 11:
+            if self.gpioIn_socketOpen:
+                self.socketCover_pwmDuty_open = self.servo_pwm.duty_u16() + 30      # Socket open 위치 저장 (변수)
+                self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
+                self.isExecProcess_initSocketPos = False                            # 종료
+                self.socketStatus = SocketStatus.READY                              # 소켓 READY 상태로
+                self.replyMessage('S' + self.rxMessage[1:5] + '000')
+            else:
+                self.idxExecProcess_initSocketPos -= 1
+
+        self.cntTimeOutExecProcess += 1
+        if self.cntTimeOutExecProcess >= TIMEOUT_INIT_SOCKET_POS:               # 50ms 루프 => 15초 넘어가면 Timeout
+            self.isExecProcess_initSocketPos = False                            # 종료
+            self.socketStatus = SocketStatus.ERROR                              # 소켓 ERROR 상태로
+            self.socketError = SocketError.INIT_SOCKET_POS
+            self.replyMessage('S' + self.rxMessage[1:5] + '001')
+
+    def exeProcess_unitOp(self):
+        if self.idxExecProcess_unitOp == 0:
+            # socket close/open
+            if self.rxMessage[1:3] == '12':
+                # close
+                if self.rxMessage[3:5] == '00':
+                    self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
+                else:
+                    self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
+                self.cntExecProcess = 0
+                self.idxExecProcess_unitOp += 1
+        elif self.idxExecProcess_unitOp == 1:
+            UNIT_OP_SUCCESS = False
+
+            # socket close/open
+            if self.rxMessage[1:3] == '12':
+                if ((self.rxMessage[3:5] == '00' and self.gpioIn_socketClose) or
+                        (self.rxMessage[3:5] == '01' and self.gpioIn_socketOpen)):
+                    UNIT_OP_SUCCESS = True
+
+            if UNIT_OP_SUCCESS:
+                self.isExecProcess_unitOp = False
+                self.socketStatus = SocketStatus.READY
+                self.replyMessage('S' + self.rxMessage[1:5] + '000')
+            else:
+                self.cntTimeOutExecProcess += 1
+                if self.cntTimeOutExecProcess >= TIMEOUT_UNIT_OP:
+                    pass
+
+                    self.isExecProcess_unitOp = False
+                    self.socketStatus = SocketStatus.ERROR
+                    self.replyMessage('S' + self.rxMessage[1:5] + '001')
+
+    def replyMessage(self, message):
+        if self.rxMessage[1:3] == '31':                         # Status_All에 대한 응답
+            pass
+        else:
+            W5500.sendMessage(UDP_CLIENT, message)
+
+
+if __name__ == "__main__":
+    cnt_msec = 0
+    main = MainHandler()
+
+    while True:
+        cnt_msec += 1
+        main.func_1msec()
+
+        if not cnt_msec % 10:
+            main.func_10msec()
+
+        if not cnt_msec % 50:
+            main.func_50msec()
+
+        if not cnt_msec % 100:
+            main.func_100msec()
+
+        if not cnt_msec % 500:
+            main.func_500msec()
+
+        time.sleep_ms(1)
