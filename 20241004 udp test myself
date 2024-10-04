@@ -1,0 +1,93 @@
+from machine import Pin, PWM
+import W5500
+import time
+
+ipAddress = '192.168.0.51'
+
+W5500.init(ipAddres=ipAddress, portNumber=8080)
+
+
+class SocketStatus:
+    UNKNOWN = 1
+    READY = 2
+    DOING = 3
+    ERRRO = 4
+
+class SocketError:
+    NONE = 'ERROR_NONE'
+    INIT_SOCKET_POS = 'ERROR_INIT_SOCKET_POS'
+
+class MainHandler:
+
+    def __init__(self):
+        self.gpioIn_sel = Pin(15, Pin.OUT)
+        self.sysLed_board = Pin(26, Pin.OUT)
+
+        self.gpioOut_clampClose = Pin(0, Pin.OUT)
+        self.gpioOut_clampOpen = Pin(1, Pin.OUT)
+        self.gpioOut_rotation0 = Pin(2, Pin.OUT)
+        self.gpioOut_rotation90 = Pin(3, Pin.OUT)
+        self.gpioOut_vacuum = Pin(4, Pin.OUT)
+        self.gpioOut_spare1 = Pin(6, Pin.OUT)
+        self.gpioOut_spare2 = Pin(7, Pin.OUT)
+        self.init_gpioOut()
+
+        self.gpioIn0 = Pin(10, Pin.IN)
+        self.gpioIn1 = Pin(11, Pin.IN)
+        self.gpioIn2 = Pin(12, Pin.IN)
+        self.gpioIn3 = Pin(13, Pin.IN)
+
+        self.gpioIn_clampClose = None
+        self.gpioIn_clampOpen = None
+        self.gpioIn_rotation0 = None
+        self.gpioIn_rotation90 = None
+        self.gpioIn_vacuum = None
+        self.gpioIn_socketClose = None
+        self.gpioIn_socketOpen = None
+
+        self.ipAddress = '192.168.0.51'
+        W5500.init(ipAddress= self.ipAddress, portNumber= 8080)
+
+        self.rxMessage = str()
+
+        self.servo_pwm = PWM(Pin(5), freq=50, duty_u16=0)
+
+        self.cntExecProcess = 0                                                 # 공용 카운트업 변수
+        self.cntTimeOutExecProcess = 0                                          # 공용 타임아웃 변수
+
+        self.isExecProcess_unit0p= False
+        self.idxExecProcess_unit0p= 0
+
+        self.isExecProcess_initSocketPos = False
+        self.idxExecProcess_initSocketPos = 0
+        self.socketCover_pwmDuty_close = 0
+        self.socketCover_pwmDuty_open = 0
+        self.socketStatus = SocketStatus.UNKNOWN
+        self.socketError = SocketError.NONE
+
+        self.isExecProcess_main = False
+        self.idxExecProcess_main = 0
+
+    def init_gpioOut(self):
+        self.set_gpioOut(self.gpioOut_clampClose, False)
+        self.set_gpioOut(self.gpioOut_clampOpen, True)
+        self.set_gpioOut(self.gpioOut_rotation0, True)
+        self.set_gpioOut(self.gpioOut_rotation90, False)
+        self.set_gpioOut(self.gpioOut_vacuum, False)
+        self.set_gpioOut(self.gpioOut_spare1, False)
+        self.set_gpioOut(self.gpioOut_spare2, False)
+
+    def set_gpioOut2(self, target, value):
+        self.target.value(not value)
+        
+
+
+    @staticmethod
+    def set_gpioOut(target, value):
+        target.value(not value)
+
+
+
+
+    def func
+
