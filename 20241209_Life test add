@@ -11,7 +11,7 @@ APP_VER = 1.0
 TIMEOUT_INIT_SOCKET_POS = 600  # 25ms * 600 = 12.5s
 TIMEOUT_UNIT_OP = 30  # 100ms * 30 = 3.0s
 TIMEOUT_LOAD_UNLOAD = 30  # 100ms * 30 = 3.0s
-
+TIMEOUT_LIFE_TEST = 100
 
 class SocketStatus:
     UNKNOWN = 1
@@ -188,12 +188,20 @@ class MainHandler:
                     self.replyMessage('S' + self.rxMessage[1:5] + '000')
                 else:
                     self.replyMessage('S' + self.rxMessage[1:5] + '001')
+
             else:
                 if self.socketStatus is SocketStatus.READY:
                     # load/unload
                     if self.rxMessage[1:3] == '21':
                         self.idxExecProcess_loadUnload = 0
                         self.isExecProcess_loadUnload = True
+                    # Life Test
+                    elif self.rxMessage[1:3] == '22':
+                        if self.rxMessage[3:5] == '00':
+                            self.idxExecLifeTest = 0
+                            self.isExecLifeTest = True
+                        elif self.rxMessage[3:5] == '01':
+                            self.isExecLifeTest = False
                     # unit operation
                     else:
                         self.idxExecProcess_unitOp = 0
@@ -373,7 +381,7 @@ class MainHandler:
                         self.set_gpioOut(self.gpioOut_rotation0, False)
                         self.set_gpioOut(self.gpioOut_rotation90, True)
 
-            elif self.rxMessage[1:3] == '14':
+            elif self.rxMessage[1:3] == '22':
                 if self.rxMessage[3:5] == '00':
                     self.isExecLifeTest = True
                 elif self.rxMessage[3:5] == '01':
@@ -566,57 +574,89 @@ class MainHandler:
 
     def LifeTest(self):
         if self.idxExecLifeTest == 0:
-            self.set_gpioOut(self.gpioOut_rotation0, True)
-            self.set_gpioOut(self.gpioOut_rotation90, False)
-            self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.set_gpioOut(self.gpioOut_rotation0, True)
+                self.set_gpioOut(self.gpioOut_rotation90, False)
+                self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 1:
-            self.socketError = SocketError.ROTATION_0D
-            if self.gpioIn_rotation0:
-                self.set_gpioOut(self.gpioOut_clampClose, False)
-                self.set_gpioOut(self.gpioOut_clampOpen, True)
-                self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.socketError = SocketError.ROTATION_0D
+                if self.gpioIn_rotation0:
+                    self.set_gpioOut(self.gpioOut_clampClose, False)
+                    self.set_gpioOut(self.gpioOut_clampOpen, True)
+                    self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 2:
-            self.socketError = SocketError.CLAMP_OPEN
-            if self.gpioIn_clampOpen:
-                self.set_gpioOut(self.gpioOut_vacumm, True)
-                self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.socketError = SocketError.CLAMP_OPEN
+                if self.gpioIn_clampOpen:
+                    self.set_gpioOut(self.gpioOut_vacumm, True)
+                    self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 3:
-            self.socketError = SocketError.VACUUM_ON
-            if self.gpioIn_vacumm:
-                self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
-                self.idxExecLifeTest += 1
-        elif self.idxExecLifeTest == 4:
-            self.socketError = SocketError.SOCKET_CLOSE
-            if self.gpioIn_socketClose:
-                self.set_gpioOut(self.gpioOut_rotation90, True)
-                self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.socketError = SocketError.VACUUM_ON
+                if self.gpioIn_vacumm:
+                    self.set_gpioOut(self.gpioOut_vacumm, False)
+                    self.servo_pwm.duty_u16(self.socketCover_pwmDuty_close)
+                    self.idxExecLifeTest += 1
+
+        elif self.idxExecLifeTest ==4:
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.socketError = SocketError.SOCKET_CLOSE
+                if self.gpioIn_socketClose:
+                    self.set_gpioOut(self.gpioOut_clampOpen, False)
+                    self.set_gpioOut(self.gpioOut_clampClose, True)
+                    self.idxExecLifeTest += 1
+        elif self.idxExecLifeTest == 5:
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+                self.socketError = SocketError.CLAMP_CLOSE
+                if self.gpioIn_socketClose:
+                    self.set_gpioOut(self.gpioOut_rotation0, False)
+                    self.set_gpioOut(self.gpioOut_rotation90, True)
+                    self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 5:
             self.socketError = SocketError.ROTATION_90D
-            if self.gpioIn_rotation90:
-                if self.cntLifeTest >= 5:
-                    self.set_gpioOut(self.gpioOut_rotation0, True)
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+
+                if self.gpioIn_rotation90:
                     self.cntLifeTest += 1
+                    if self.cntLifeTest >= 5:
+                        self.set_gpioOut(self.gpioOut_rotation90, False)
+                        self.set_gpioOut(self.gpioOut_rotation0, True)
+                        self.cntLifeTest += 1
         elif self.idxExecLifeTest == 6:
             self.socketError = SocketError.ROTATION_0D
-            if self.gpioIn_rotation0:
-                self.set_gpioOut(self.gpioOut_clampOpen)
-                self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+
+                if self.gpioIn_rotation0:
+                    self.set_gpioOut(self.gpioOut_clampClose, False)
+                    self.set_gpioOut(self.gpioOut_clampOpen, True)
+                    self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 7:
             self.socketError = SocketError.CLAMP_OPEN
-            if self.gpioIn_clampOpen:
-                self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
-                self.idxExecLifeTest += 1
+            self.cntLifeTest += 1
+            if self.cntLifeTest >= 10:
+
+                if self.gpioIn_clampOpen:
+                    self.servo_pwm.duty_u16(self.socketCover_pwmDuty_open)
+                    self.idxExecLifeTest += 1
         elif self.idxExecLifeTest == 8:
+            self.socketError = SocketError.SOCKET_OPEN
             self.socketError = SocketError.SOCKET_OPEN
             if self.gpioIn_socketOpen:
                 self.idxExecLifeTest = 0
+
         self.cntTimeOutLifeTest += 1
-        if self.cntTimeOutLifeTest >= TIMEOUT_LOAD_UNLOAD:
+        if self.cntTimeOutLifeTest >= TIMEOUT_LIFE_TEST:
             errorCode = self.checkErrorCode()
             self.replyMessage('S' + self.rxMessage[1:5] + errorCode)
-
-
-
 
 
     def replyMessage(self, message):
